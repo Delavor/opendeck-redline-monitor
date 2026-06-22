@@ -44,7 +44,7 @@ const BRIGHTNESS_REFRESH_MS = 15000;
 const CPU_POWER_SOURCE_CACHE_MS = 10000;
 const TRANSIENT_IMAGE_MS = 1250;
 
-const NETWORK_EXCLUDED_PREFIXES = ['lo', 'docker', 'br-', 'veth', 'virbr', 'vmnet', 'vboxnet', 'tailscale', 'zt', 'tun', 'tap', 'wg'];
+const NETWORK_EXCLUDED_PREFIXES = ['lo', 'docker', 'br-', 'veth', 'virbr', 'vmnet', 'vboxnet', 'tailscale', 'zt', 'tun', 'tap', 'wg', 'utun', 'awdl', 'llw', 'anpi'];
 const NETWORK_PREFERRED_PREFIXES = ['en', 'eth', 'wl', 'wlan', 'ww', 'usb'];
 
 module.exports = {

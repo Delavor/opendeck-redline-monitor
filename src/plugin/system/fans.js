@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { fileExists, readText, warnOnce } = require('../utils');
+const { isMac } = require('../platform');
 
 let cachedFans = [];
 let lastFanScan = 0;
@@ -245,6 +246,11 @@ function scanNvidiaFans() {
 }
 
 function listAvailableFans(force = false) {
+  if (isMac) {
+    warnOnce('fans-macos-unavailable', 'Fan monitoring is not available on macOS without third-party tools');
+    return [];
+  }
+
   if (!force && cachedFans.length > 0 && (Date.now() - lastFanScan) < FAN_CACHE_MS) {
     return cachedFans;
   }
@@ -259,6 +265,8 @@ function listAvailableFans(force = false) {
 }
 
 function getFanStats(selector = 'auto') {
+  if (isMac) return unavailableFanStats();
+
   const fans = listAvailableFans();
 
   if (fans.length === 0) {

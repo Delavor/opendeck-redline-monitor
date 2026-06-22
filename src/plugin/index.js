@@ -4,11 +4,13 @@ const si = require('systeminformation');
 const state = require('./state');
 const { ACTIONS } = require('./constants');
 const { log, warn, clamp, runCommand, commandExists } = require('./utils');
+const { isMac } = require('./platform');
 const { storeSettingsForContext, getSettingsForContext, getPluginWideSettings, getResolvedAction } = require('./settings');
 const { generateButtonImage, generateBatteryButtonImage, generateCenteredHeaderButtonImage, generateDialImage, generateFooterButtonImage, unavailableButton, unavailableDial } = require('./renderer');
 const transport = require('./transport');
 
 const { getCpuPower } = require('./system/cpu');
+const { fetchGlancesData, startGlancesServer, stopGlancesServer } = require('./system/glances');
 const { getGpuStats, listAvailableGpus } = require('./system/gpu');
 const { getNetworkStats, listAvailableNetworkInterfaces } = require('./system/network');
 const { refreshMonitorBrightness, setMonitorBrightness, getBrightnessState } = require('./system/brightness');
@@ -19,7 +21,20 @@ const { getPingState, getPing } = require('./system/ping');
 const { getTopProcessSummary } = require('./system/top');
 const { listAvailableDisks, summarizeDisks } = require('./system/disk');
 
-const ACTION_LAUNCHERS = Object.freeze({
+const ACTION_LAUNCHERS = Object.freeze(isMac ? {
+  [ACTIONS.cpu]: {
+    command: 'open -a "Activity Monitor"',
+    check: null,
+    success: { icon: '💻', title: 'CPU', line1: 'OPEN', line2: 'Activity' },
+    failure: { icon: '💻', title: 'CPU', line1: 'NO APP', line2: 'Not found' },
+  },
+  [ACTIONS.gpu]: {
+    command: 'open -a "Activity Monitor"',
+    check: null,
+    success: { icon: '🎮', title: 'GPU', line1: 'OPEN', line2: 'Activity' },
+    failure: { icon: '🎮', title: 'GPU', line1: 'NO APP', line2: 'Not found' },
+  },
+} : {
   [ACTIONS.cpu]: {
     command: 'plasma-systemmonitor > /dev/null 2>&1 &',
     check: 'plasma-systemmonitor',
@@ -467,7 +482,7 @@ async function openActionTool(action, context) {
   const launcher = ACTION_LAUNCHERS[action];
   if (!launcher) return false;
 
-  const available = await commandExists(launcher.check);
+  const available = launcher.check ? await commandExists(launcher.check) : true;
 
   if (!available) {
     transport.showTransientImage(
@@ -635,6 +650,10 @@ function cleanupRuntime() {
   clearInterval(state.timerInterval);
   clearTimeout(state.ddcutilTimeout);
 
+  if (isMac) {
+    stopGlancesServer();
+  }
+
   state.pollingInterval = null;
   state.timerInterval = null;
   state.ddcutilTimeout = null;
@@ -666,7 +685,9 @@ function startTimerLoop() {
         timer.remaining = 0;
         timer.state = 'ringing';
 
-        const soundCommand = 'paplay /usr/share/sounds/freedesktop/stereo/complete.oga || aplay /usr/share/sounds/alsa/Front_Center.wav';
+        const soundCommand = isMac
+          ? 'afplay /System/Library/Sounds/Glass.aiff'
+          : 'paplay /usr/share/sounds/freedesktop/stereo/complete.oga || aplay /usr/share/sounds/alsa/Front_Center.wav';
         runCommand(`${soundCommand} ; sleep 0.3 ; ${soundCommand} ; sleep 0.3 ; ${soundCommand}`, 6000).catch(() => {});
 
         setTimeout(() => {
@@ -832,7 +853,28 @@ async function pollOnce() {
 
     await Promise.allSettled(preloadPromises);
 
-    const cpuPower = needsCpu ? getCpuPower() : { available: false, watts: 0 };
+    let glancesCpuData = null;
+    if (needsCpu && isMac) {
+      try {
+        glancesCpuData = await fetchGlancesData();
+        if (glancesCpuData) {
+          if (Number.isFinite(glancesCpuData.load)) {
+            cpuData = { ...cpuData, currentLoad: glancesCpuData.load };
+          }
+          if (Number.isFinite(glancesCpuData.temp) && glancesCpuData.temp > 0) {
+            cpuTemp = { ...cpuTemp, main: glancesCpuData.temp };
+          }
+        }
+      } catch (error) {
+        warn('glances cpu fetch failed:', error?.message || error);
+      }
+    }
+
+    const cpuPower = needsCpu
+      ? (isMac && Number.isFinite(glancesCpuData?.watts) && glancesCpuData.watts > 0
+          ? { available: true, watts: glancesCpuData.watts }
+          : getCpuPower())
+      : { available: false, watts: 0 };
 
     for (const context of Object.keys(state.activeContexts)) {
       const { action } = state.activeContexts[context];
@@ -1199,6 +1241,10 @@ function startPlugin() {
       event: registerEvent,
       uuid: pluginUUID,
     });
+
+    if (isMac) {
+      startGlancesServer().catch((err) => warn('glances start failed:', err?.message || err));
+    }
   });
 
   ws.on('error', (error) => {

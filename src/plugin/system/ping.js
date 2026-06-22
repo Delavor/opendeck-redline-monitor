@@ -1,6 +1,7 @@
 const state = require('../state');
 const { shellEscape, runCommand } = require('../utils');
 const { DEFAULT_SETTINGS } = require('../constants');
+const { isMac } = require('../platform');
 
 function getPingState(context) {
   if (!state.pingStates[context]) {
@@ -26,7 +27,11 @@ async function getPing(context, host, force = false) {
     pingState.lastPingTime = 0;
   }
 
-  const result = await runCommand(`LC_ALL=C ping -c 1 -W 2 ${shellEscape(target)}`, 4000);
+  // Linux -W is in seconds; macOS -W is in milliseconds
+  const pingCmd = isMac
+    ? `LC_ALL=C ping -c 1 -W 2000 ${shellEscape(target)}`
+    : `LC_ALL=C ping -c 1 -W 2 ${shellEscape(target)}`;
+  const result = await runCommand(pingCmd, 4000);
 
   if (result.error || !result.stdout) {
     pingState.failedPings += 1;

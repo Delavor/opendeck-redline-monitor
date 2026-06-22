@@ -1,3 +1,14 @@
+const IS_MAC = process.platform === 'darwin';
+
+const MAC_HIDDEN_MOUNTS = new Set([
+  '/System/Volumes/VM',
+  '/System/Volumes/Preboot',
+  '/System/Volumes/Update',
+  '/System/Volumes/xarts',
+  '/System/Volumes/iSCPreboot',
+  '/private/var/vm',
+]);
+
 function getRawDiskKey(fsPath = '') {
   const value = String(fsPath || '').trim();
   if (!value.startsWith('/dev/')) return '';
@@ -7,6 +18,8 @@ function getRawDiskKey(fsPath = '') {
   if (/^loop\d+$/.test(name)) return '';
   if (/^nvme\d+n\d+p\d+$/.test(name)) return `/dev/${name.replace(/p\d+$/, '')}`;
   if (/^mmcblk\d+p\d+$/.test(name)) return `/dev/${name.replace(/p\d+$/, '')}`;
+  // macOS APFS: disk1s1, disk2s3 → disk1, disk2
+  if (/^disk\d+s\d+$/.test(name)) return `/dev/${name.replace(/s\d+$/, '')}`;
   if (/^[a-z]+\d+$/.test(name)) return `/dev/${name.replace(/\d+$/, '')}`;
 
   return value;
@@ -20,6 +33,11 @@ function shouldIncludeDisk(disk = {}) {
   if (/^\/dev\/loop\d+$/.test(fsPath)) return false;
   if (mount === '/boot' || mount === '/boot/efi' || mount.startsWith('/boot/')) return false;
   if (mount.includes('/snap/') || mount.includes('/docker/')) return false;
+
+  if (IS_MAC) {
+    if (MAC_HIDDEN_MOUNTS.has(mount)) return false;
+    if (mount.startsWith('/System/Volumes/Preboot/')) return false;
+  }
 
   return true;
 }

@@ -1,8 +1,54 @@
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const state = require('../state');
 const { CPU_POWER_SOURCE_CACHE_MS } = require('../constants');
 const { fileExists, readText, warnOnce } = require('../utils');
+const { isMac } = require('../platform');
+
+let macPowerCache = { timestamp: 0, result: { available: false, watts: 0 } };
+const MAC_POWER_CACHE_MS = 10000;
+
+function getMacSystemPower() {
+  const now = Date.now();
+  if (now - macPowerCache.timestamp < MAC_POWER_CACHE_MS) {
+    return macPowerCache.result;
+  }
+
+  const miss = (result = { available: false, watts: 0 }) => {
+    macPowerCache = { timestamp: now, result };
+    return result;
+  };
+
+  try {
+    const output = execFileSync('ioreg', ['-rn', 'AppleSmartBattery', '-l'], {
+      encoding: 'utf8',
+      timeout: 1500,
+    });
+
+    if (!output) return miss();
+
+    const externalMatch = output.match(/"ExternalConnected"\s*=\s*(Yes|No)/i);
+    const isOnAC = /Yes/i.test(externalMatch?.[1] || '');
+    if (isOnAC) return miss();
+
+    const amperageMatch = output.match(/"InstantAmperage"\s*=\s*(-?\d+)/);
+    const voltageMatch = output.match(/"Voltage"\s*=\s*(\d+)/);
+    if (!amperageMatch || !voltageMatch) return miss();
+
+    const amperage = Math.abs(Number.parseInt(amperageMatch[1], 10));
+    const voltage = Number.parseInt(voltageMatch[1], 10);
+    const watts = (amperage * voltage) / 1_000_000;
+
+    if (!Number.isFinite(watts) || watts <= 0 || watts > 300) return miss();
+
+    const rounded = watts < 10 ? Math.round(watts * 10) / 10 : Math.round(watts);
+    return miss({ available: true, watts: rounded });
+  } catch (error) {
+    warnOnce('mac-system-power-failed', `macOS system power read failed: ${error.message}`);
+    return miss();
+  }
+}
 
 function scanCpuPowerSources(force = false) {
   const now = Date.now();
@@ -181,6 +227,10 @@ function readCpuPowerSource(source) {
 }
 
 function getCpuPower() {
+  if (isMac) {
+    return getMacSystemPower();
+  }
+
   const sources = scanCpuPowerSources();
 
   if (!sources.length) {

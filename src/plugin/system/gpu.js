@@ -3,6 +3,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const state = require('../state');
 const { fileExists, readText, warnOnce } = require('../utils');
+const { isMac } = require('../platform');
 
 function unavailableGpuStats() {
   return {
@@ -455,6 +456,10 @@ function getNvidiaGpuStatsBySelector(selector) {
 }
 
 function listAvailableGpus() {
+  if (isMac) {
+    return [];
+  }
+
   return [
     ...getAmdGpuEntries(),
     ...getNvidiaGpuEntries(),
@@ -463,6 +468,10 @@ function listAvailableGpus() {
 }
 
 function getGpuStats(selector = 'auto') {
+  if (isMac) {
+    return unavailableGpuStats();
+  }
+
   const normalizedSelector = typeof selector === 'string' ? selector.trim() : '';
 
   if (!normalizedSelector || normalizedSelector === 'auto') {

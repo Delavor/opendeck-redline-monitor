@@ -180,6 +180,10 @@
     {
       "Platform": "linux",
       "MinimumVersion": "1.0"
+    },
+    {
+      "Platform": "mac",
+      "MinimumVersion": "1.0"
     }
   ],
   "Software": {

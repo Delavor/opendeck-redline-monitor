@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { runCommand, shellEscape, warn } = require('../utils');
+const { isMac } = require('../platform');
 
 let cachedDevices = [];
 let deviceListPromise = null;
@@ -720,7 +721,68 @@ async function getMouseBattery(selectedDevice = 'auto') {
   }
 }
 
+const MAC_BATTERY_ID = 'mac:internal';
+
+async function getMacBatteryRaw() {
+  const result = await runCommand('pmset -g batt', 3000);
+  if (result.error || !result.stdout) return null;
+
+  const percentMatch = result.stdout.match(/(\d+)%/);
+  const percentage = percentMatch ? Number.parseInt(percentMatch[1], 10) : null;
+  if (!Number.isFinite(percentage)) return null;
+
+  let state = 'UNKNOWN';
+  if (/finishing charge/i.test(result.stdout)) state = 'FULL';
+  else if (/charged/i.test(result.stdout)) state = 'FULL';
+  else if (/charging/i.test(result.stdout)) state = 'CHARGING';
+  else if (/discharging/i.test(result.stdout)) state = 'DISCHARGING';
+  else if (/AC Power/i.test(result.stdout.split('\n')[0])) state = 'FULL';
+
+  return { percentage, state };
+}
+
+async function getMacBatteryDevice() {
+  const raw = await getMacBatteryRaw();
+  if (!raw) return { available: false };
+
+  return {
+    available: true,
+    percentage: raw.percentage,
+    state: raw.state,
+    label: 'MacBook',
+    model: '',
+    manufacturer: 'Apple',
+    path: MAC_BATTERY_ID,
+    rawPath: 'InternalBattery-0',
+    fromCache: false,
+    source: 'pmset',
+  };
+}
+
+async function listMacBatteryDevices() {
+  const result = await getMacBatteryDevice();
+  if (!result.available) return [];
+
+  return [{
+    id: MAC_BATTERY_ID,
+    rawId: 'InternalBattery-0',
+    label: 'MacBook',
+    model: '',
+    manufacturer: 'Apple',
+    serial: '',
+    online: result.state !== 'DISCHARGING' ? 1 : 0,
+    percentage: result.percentage,
+    state: result.state,
+    source: 'pmset',
+    fromCache: false,
+  }];
+}
+
 module.exports = {
-  listBatteryDevices,
-  getMouseBattery,
+  listBatteryDevices: isMac
+    ? listMacBatteryDevices
+    : listBatteryDevices,
+  getMouseBattery: isMac
+    ? (selectedDevice) => getMacBatteryDevice()
+    : getMouseBattery,
 };

@@ -137,7 +137,11 @@ PY
 }
 
 read_metadata() {
-readarray -t BUILD_META < <(
+# readarray is bash 4+ only; macOS ships bash 3.2, so use a while-read loop
+BUILD_META=()
+while IFS= read -r line; do
+  BUILD_META+=("$line")
+done < <(
 python3 <<'PY'
 import json
 import re
@@ -180,12 +184,37 @@ ensure_runtime_deps() {
     fi
   done
 
-  if [[ "$missing" -eq 1 ]]; then
-    echo "Installing runtime dependencies with npm ci --omit=dev"
-    npm ci --omit=dev
-  else
+  if [[ "$missing" -eq 0 ]]; then
     echo "Runtime dependencies already present"
+    return 0
   fi
+
+  echo "Installing runtime dependencies with npm ci --omit=dev"
+
+  if npm ci --omit=dev; then
+    return 0
+  fi
+
+  # On macOS, Node.js does not automatically trust the system keychain, which
+  # breaks npm in corporate networks with a proxy CA. Export the system and
+  # login keychains and retry via NODE_EXTRA_CA_CERTS.
+  if [[ "$(uname -s)" != "Darwin" ]] || ! command -v security >/dev/null 2>&1; then
+    echo "Error: npm ci failed. On Linux, fix SSL with: npm config set cafile /path/to/ca.pem" >&2
+    return 1
+  fi
+
+  echo "npm ci failed — retrying with macOS system keychain certificates..."
+  local ca_bundle
+  ca_bundle="$(mktemp /tmp/macos-ca-bundle.XXXXXX.pem)"
+
+  security find-certificate -a -p /Library/Keychains/System.keychain                        >> "$ca_bundle" 2>/dev/null || true
+  security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain >> "$ca_bundle" 2>/dev/null || true
+  security find-certificate -a -p ~/Library/Keychains/login.keychain-db                     >> "$ca_bundle" 2>/dev/null || true
+
+  NODE_EXTRA_CA_CERTS="$ca_bundle" npm ci --omit=dev
+  local rc=$?
+  rm -f "$ca_bundle"
+  return $rc
 }
 
 copy_optional() {
@@ -318,7 +347,7 @@ chmod +x "$STAGE_DIR/start.sh"
 rm -f "$ZIP_PATH"
 (
   cd "$OUT_DIR"
-  zip -qr "$ZIP_NAME" "$PACKAGE_NAME"
+  zip -qr "$ZIP_NAME" "$PACKAGE_NAME" -x "*.DS_Store" -x "*/.DS_Store"
 )
 
 validate_zip "$ZIP_PATH" "$PACKAGE_NAME"
